@@ -98,6 +98,10 @@ linters:
 
     # Deprecated in favour of gomodguard_v2, which is enabled by default: all
     - gomodguard
+
+    # We intentionally use a replace directive for the crossplane-runtime fork
+    # to test events API changes. This is necessary for development.
+    - gomoddirectives
   settings:
     depguard:
       rules:

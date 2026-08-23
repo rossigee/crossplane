@@ -64,6 +64,7 @@ const (
 	errManifestBuilderOptions = "cannot prepare runtime manifest builder options"
 	errPreHook                = "pre establish runtime hook failed for package"
 	errPostHook               = "post establish runtime hook failed for package"
+	errDeactivateHook         = "deactivate runtime hook failed for package"
 
 	errNoRuntimeConfig          = "no deployment runtime config set"
 	errGetRuntimeConfig         = "cannot get referenced deployment runtime config"
