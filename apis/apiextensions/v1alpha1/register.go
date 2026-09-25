@@ -60,6 +60,12 @@ var (
 	ManagedResourceActivationPolicyGroupKind        = schema.GroupKind{Group: Group, Kind: ManagedResourceActivationPolicyKind}.String()
 	ManagedResourceActivationPolicyKindAPIVersion   = ManagedResourceActivationPolicyKind + "." + SchemeGroupVersion.String()
 	ManagedResourceActivationPolicyGroupVersionKind = SchemeGroupVersion.WithKind(ManagedResourceActivationPolicyKind)
+
+	// DiscoveryReport type metadata.
+	DiscoveryReportKind             = reflect.TypeFor[DiscoveryReport]().Name()
+	DiscoveryReportGroupKind        = schema.GroupKind{Group: Group, Kind: DiscoveryReportKind}.String()
+	DiscoveryReportKindAPIVersion   = DiscoveryReportKind + "." + SchemeGroupVersion.String()
+	DiscoveryReportGroupVersionKind = SchemeGroupVersion.WithKind(DiscoveryReportKind)
 )
 
 // addKnownTypes adds this package's types to the supplied scheme.
@@ -68,6 +74,7 @@ func addKnownTypes(s *runtime.Scheme) error {
 		&Usage{}, &UsageList{},
 		&ManagedResourceDefinition{}, &ManagedResourceDefinitionList{},
 		&ManagedResourceActivationPolicy{}, &ManagedResourceActivationPolicyList{},
+		&DiscoveryReport{}, &DiscoveryReportList{},
 	)
 	metav1.AddToGroupVersion(s, SchemeGroupVersion)
 
