@@ -17,13 +17,27 @@ limitations under the License.
 package beta
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 
 	"github.com/crossplane/crossplane/apis/v2/apiextensions/v1alpha1"
 )
+
+// testMRD builds a ManagedResourceDefinition for tests. The spec embeds
+// CustomResourceDefinitionSpec, and promoted fields cannot be set in a
+// composite literal before go1.27.
+func testMRD(group, kind, plural string) *v1alpha1.ManagedResourceDefinition {
+	mrd := &v1alpha1.ManagedResourceDefinition{}
+	mrd.Spec.Group = group
+	mrd.Spec.Names = extv1.CustomResourceDefinitionNames{Kind: kind, Plural: plural}
+	return mrd
+}
 
 // TestGenerateMRName tests that the name generation is stable and consistent.
 func TestGenerateMRName(t *testing.T) {
@@ -162,149 +176,158 @@ func TestListExternalResources(t *testing.T) {
 
 // TestGenerateManifests tests YAML generation for adoption.
 func TestGenerateManifests(t *testing.T) {
-	tests := []struct {
-		name          string
+	type args struct {
+		mrd           *v1alpha1.ManagedResourceDefinition
 		externalNames []string
-		kind          string
-		group         string
-		wantYAMLCount int
-		wantContains  []string
+	}
+
+	type want struct {
+		count       int
+		kind        string
+		apiVersion  string
+		external    string
+		policies    []any
+		providerRef string
+	}
+
+	cases := map[string]struct {
+		reason string
+		args   args
+		want   want
 	}{
-		{
-			name:          "Single bucket adoption",
-			externalNames: []string{"my-bucket"},
-			kind:          "Bucket",
-			group:         "s3.aws.crossplane.io",
-			wantYAMLCount: 1,
-			wantContains: []string{
-				"kind: Bucket",
-				"apiVersion: s3.aws.crossplane.io/v1alpha1",
-				"crossplane.io/external-name: my-bucket",
+		"SingleAdoption": {
+			reason: "A single unmanaged resource should produce one managed resource with conservative management policies.",
+			args: args{
+				mrd:           testMRD("s3.aws.crossplane.io", "Bucket", "buckets"),
+				externalNames: []string{"my-bucket"},
+			},
+			want: want{
+				count:       1,
+				kind:        "Bucket",
+				apiVersion:  "s3.aws.crossplane.io/v1",
+				external:    "my-bucket",
+				policies:    []any{"Observe", "LateInitialize"},
+				providerRef: "default",
 			},
 		},
-		{
-			name:          "Multiple resources",
-			externalNames: []string{"bucket-1", "bucket-2", "bucket-3"},
-			kind:          "Bucket",
-			group:         "s3.aws.crossplane.io",
-			wantYAMLCount: 3,
-			wantContains: []string{
-				"kind: Bucket",
+		"MultipleAdoptionsSorted": {
+			reason: "Multiple unmanaged resources should each produce a managed resource, in deterministic sorted order.",
+			args: args{
+				mrd:           testMRD("s3.aws.crossplane.io", "Bucket", "buckets"),
+				externalNames: []string{"bucket-c", "bucket-a", "bucket-b"},
 			},
+			want: want{count: 3, kind: "Bucket", apiVersion: "s3.aws.crossplane.io/v1", external: "bucket-a", policies: []any{"Observe", "LateInitialize"}, providerRef: "default"},
 		},
-		{
-			name:          "Empty resources",
-			externalNames: []string{},
-			kind:          "Bucket",
-			group:         "s3.aws.crossplane.io",
-			wantYAMLCount: 0,
-			wantContains:  []string{},
+		"CustomProviderConfig": {
+			reason: "The requested ProviderConfig should be set, rather than relying on the CRD default of 'default'.",
+			args: args{
+				mrd:           testMRD("s3.aws.crossplane.io", "Bucket", "buckets"),
+				externalNames: []string{"my-bucket"},
+			},
+			want: want{count: 1, kind: "Bucket", apiVersion: "s3.aws.crossplane.io/v1", external: "my-bucket", policies: []any{"Observe", "LateInitialize"}, providerRef: "custom-pc"},
+		},
+		"NoResources": {
+			reason: "No unmanaged resources should produce no manifests.",
+			args: args{
+				mrd:           testMRD("s3.aws.crossplane.io", "Bucket", "buckets"),
+				externalNames: []string{},
+			},
+			want: want{count: 0},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Simulate generateManifests behavior
-			var manifests []string
-			for _, extName := range tt.externalNames {
-				mrName := generateMRName(tt.kind, extName)
-				yaml := "---\n" +
-					"apiVersion: " + tt.group + "/v1alpha1\n" +
-					"kind: " + tt.kind + "\n" +
-					"metadata:\n" +
-					"  name: " + mrName + "\n" +
-					"  annotations:\n" +
-					"    crossplane.io/external-name: " + extName + "\n" +
-					"spec:\n" +
-					"  managementPolicies:\n" +
-					"  - Observe\n" +
-					"  - LateInitialize\n"
-				manifests = append(manifests, yaml)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			pc := "default"
+			if tc.want.providerRef != "" {
+				pc = tc.want.providerRef
+			}
+			c := &discoverCmd{Namespace: "default", ProviderConfig: pc}
+
+			got := c.generateManifests(tc.args.mrd, tc.args.externalNames)
+
+			if diff := cmp.Diff(tc.want.count, len(got)); diff != "" {
+				t.Errorf("\n%s\ngenerateManifests(...): -want count, +got count:\n%s", tc.reason, diff)
 			}
 
-			if len(manifests) != tt.wantYAMLCount {
-				t.Errorf("expected %d manifests, got %d", tt.wantYAMLCount, len(manifests))
+			if tc.want.count == 0 {
+				return
 			}
 
-			// Check that expected content is in generated YAML
-			allYAML := ""
-			for _, m := range manifests {
-				allYAML += m
+			first := got[0]
+			if first.GetKind() != tc.want.kind {
+				t.Errorf("\n%s\nwant kind %q, got %q", tc.reason, tc.want.kind, first.GetKind())
 			}
-			for _, want := range tt.wantContains {
-				if !stringContains(allYAML, want) {
-					t.Errorf("expected manifest to contain %q", want)
+			if first.GetAPIVersion() != tc.want.apiVersion {
+				t.Errorf("\n%s\nwant apiVersion %q, got %q", tc.reason, tc.want.apiVersion, first.GetAPIVersion())
+			}
+			if got := first.GetAnnotations()["crossplane.io/external-name"]; got != tc.want.external {
+				t.Errorf("\n%s\nwant external-name %q, got %q", tc.reason, tc.want.external, got)
+			}
+
+			// The management policies must survive generation. If they are
+			// missing the CRD defaults them to "*" and Crossplane will delete
+			// the external resource along with the managed resource.
+			policies, found, err := unstructured.NestedSlice(first.Object, "spec", "managementPolicies")
+			if err != nil || !found {
+				t.Fatalf("\n%s\nmanagementPolicies missing from generated object: found=%v err=%v", tc.reason, found, err)
+			}
+			if diff := cmp.Diff(tc.want.policies, policies); diff != "" {
+				t.Errorf("\n%s\nmanagementPolicies: -want, +got:\n%s", tc.reason, diff)
+			}
+			for _, p := range policies {
+				if p == "*" {
+					t.Errorf("\n%s\ngenerated full-management policy %q; adoption must never be fully managed", tc.reason, p)
 				}
+			}
+
+			// The ProviderConfig must be set explicitly, for the same reason.
+			pcName, found, err := unstructured.NestedString(first.Object, "spec", "providerConfigRef", "name")
+			if err != nil || !found {
+				t.Fatalf("\n%s\nproviderConfigRef missing from generated object: found=%v err=%v", tc.reason, found, err)
+			}
+			if pcName != tc.want.providerRef {
+				t.Errorf("\n%s\nwant providerConfigRef %q, got %q", tc.reason, tc.want.providerRef, pcName)
 			}
 		})
 	}
 }
 
-// TestMarshalToYAML tests YAML marshaling of unstructured objects.
-func TestMarshalToYAML(t *testing.T) {
-	obj := &unstructured.Unstructured{
-		Object: map[string]any{
-			"apiVersion": "s3.aws.crossplane.io/v1alpha1",
-			"kind":       "Bucket",
-			"metadata": map[string]any{
-				"name": "my-bucket-mr",
-				"annotations": map[string]any{
-					"crossplane.io/external-name": "my-bucket",
-				},
-			},
-			"spec": map[string]any{
-				"managementPolicies": []any{"Observe", "LateInitialize"},
-			},
-		},
+// TestRenderManifestsRoundTrip verifies that rendering to YAML and parsing back
+// preserves the spec. This is the regression test for the auto-import bug where
+// the hand-written parser silently dropped managementPolicies, causing the CRD
+// default of "*" to grant full management over adopted resources.
+func TestRenderManifestsRoundTrip(t *testing.T) {
+	mrd := testMRD("s3.aws.crossplane.io", "Bucket", "buckets")
+	c := &discoverCmd{Namespace: "default", ProviderConfig: "default"}
+
+	objs := c.generateManifests(mrd, []string{"bucket-a", "bucket-b"})
+	rendered, err := renderManifests(objs)
+	if err != nil {
+		t.Fatalf("renderManifests(...): unexpected error: %v", err)
 	}
 
-	// Marshal to YAML
-	yaml := string(marshalToYAML(obj))
-
-	// Check essential fields are present
-	expectedFields := []string{
-		"apiVersion: s3.aws.crossplane.io/v1alpha1",
-		"kind: Bucket",
-		"name: my-bucket-mr",
-		"crossplane.io/external-name: my-bucket",
+	if got, want := strings.Count(rendered, "\n---\n")+1, 2; got != want {
+		t.Errorf("renderManifests(...): want %d documents, got %d", want, got)
 	}
 
-	for _, field := range expectedFields {
-		if !stringContains(yaml, field) {
-			t.Errorf("expected YAML to contain %q, full YAML:\n%s", field, yaml)
+	for _, doc := range strings.Split(rendered, "\n---\n") {
+		parsed := &unstructured.Unstructured{}
+		if err := yaml.Unmarshal([]byte(doc), &parsed.Object); err != nil {
+			t.Fatalf("cannot parse rendered manifest: %v", err)
 		}
-	}
-}
 
-// TestParseYAMLToUnstructured tests YAML parsing to unstructured objects.
-func TestParseYAMLToUnstructured(t *testing.T) {
-	yaml := `apiVersion: s3.aws.crossplane.io/v1alpha1
-kind: Bucket
-metadata:
-  name: my-bucket-mr
-  annotations:
-    crossplane.io/external-name: my-bucket
-spec:
-  managementPolicies:
-  - Observe
-  - LateInitialize
-`
+		policies, found, err := unstructured.NestedSlice(parsed.Object, "spec", "managementPolicies")
+		if err != nil || !found {
+			t.Fatalf("managementPolicies lost in round-trip: found=%v err=%v", found, err)
+		}
+		if diff := cmp.Diff([]any{"Observe", "LateInitialize"}, policies); diff != "" {
+			t.Errorf("managementPolicies lost in round-trip: -want, +got:\n%s", diff)
+		}
 
-	obj := parseYAMLToUnstructured(yaml)
-
-	// Check basic structure
-	if obj.GetKind() != "Bucket" {
-		t.Errorf("expected kind Bucket, got %q", obj.GetKind())
-	}
-
-	if obj.GetName() != "my-bucket-mr" {
-		t.Errorf("expected name my-bucket-mr, got %q", obj.GetName())
-	}
-
-	// Check annotations were preserved
-	annotations := obj.GetAnnotations()
-	if annotations["crossplane.io/external-name"] != "my-bucket" {
-		t.Errorf("expected external-name annotation, got %v", annotations)
+		if _, found, _ := unstructured.NestedString(parsed.Object, "spec", "providerConfigRef", "name"); !found {
+			t.Error("providerConfigRef lost in round-trip")
+		}
 	}
 }
 
