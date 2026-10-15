@@ -83,7 +83,7 @@ This generates YAML with adoption policies (Observe, LateInitialize) and managem
   2. Discovery controller to load and instantiate providers
   3. End-to-end testing of provider integration
 - ❌ **Manual DiscoveryReport creation required:** Long-term, the controller will auto-create DiscoveryReports for all MRDs with providers that support discovery. For now, operators must manually create them.
-- ❌ **No manifest schema validation:** Generated manifests have basic structure but may be incomplete for complex resources.
+- ❌ **No manifest schema validation:** Generated manifests are not validated against the target CRD schema before they are applied.
 - ❌ **Single ProviderConfig per report:** The spec requires specifying a single ProviderConfig. Multi-account discovery is not yet supported.
 
 ## Next Steps
