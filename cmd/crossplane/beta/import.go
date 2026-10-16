@@ -17,7 +17,6 @@ limitations under the License.
 package beta
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"hash/fnv"
@@ -26,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/yaml"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
@@ -127,19 +128,24 @@ func (c *discoverCmd) Run(log logging.Logger) error {
 	}
 	log.Debug("Unmanaged resources", "count", len(unmanaged))
 
-	// Step 8: Generate YAML manifests
+	// Step 8: Generate adoption manifests
 	log.Debug("Generating adoption manifests")
-	yaml := c.generateManifests(mrd, unmanaged)
+	objs := c.generateManifests(mrd, unmanaged)
 
-	// Step 9: Output YAML
-	if err := c.outputManifests(yaml); err != nil {
+	// Step 9: Render and output YAML
+	rendered, err := renderManifests(objs)
+	if err != nil {
+		return errors.Wrap(err, "cannot render manifests")
+	}
+
+	if err := c.outputManifests(rendered); err != nil {
 		return errors.Wrap(err, "cannot output manifests")
 	}
 
 	// Step 10: Auto-import if requested
 	if !c.DryRun && c.AutoImport {
 		log.Debug("Applying manifests")
-		if err := c.applyManifests(ctx, dClient, yaml, c.Namespace); err != nil {
+		if err := c.applyManifests(ctx, dClient, objs, mrd); err != nil {
 			return errors.Wrap(err, "cannot apply manifests")
 		}
 		if _, err := fmt.Fprintf(os.Stdout, "Successfully imported %d resources.\n", len(unmanaged)); err != nil {
@@ -244,9 +250,10 @@ func (c *discoverCmd) listExternalResources(ctx context.Context, log logging.Log
 // and extracts their external-name annotations.
 func (c *discoverCmd) getExistingManagedResources(ctx context.Context, dClient dynamic.Interface, mrd *xpv1alpha1.ManagedResourceDefinition) ([]string, error) {
 	gvr := schema.GroupVersionResource{
-		Group:    mrd.Spec.Group,
-		Version:  "v1",
-		Resource: strings.ToLower(mrd.Spec.Names.Kind + "s"), // pluralize
+		Group:   mrd.Spec.Group,
+		Version: "v1",
+		// Use the plural from the MRD rather than guessing it from the kind.
+		Resource: mrd.Spec.Names.Plural,
 	}
 
 	list, err := dClient.Resource(gvr).Namespace("").List(ctx, metav1.ListOptions{})
@@ -265,13 +272,15 @@ func (c *discoverCmd) getExistingManagedResources(ctx context.Context, dClient d
 	return names, nil
 }
 
-// generateManifests creates Kubernetes manifests for adopting unmanaged resources.
-func (c *discoverCmd) generateManifests(mrd *xpv1alpha1.ManagedResourceDefinition, unmanagedNames []string) string {
-	var buf bytes.Buffer
-
+// generateManifests builds the managed resource objects that adopt unmanaged
+// resources. Objects are returned unstructured so the same data can be rendered
+// as YAML and applied to the cluster without a lossy parse-back round-trip.
+func (c *discoverCmd) generateManifests(mrd *xpv1alpha1.ManagedResourceDefinition, unmanagedNames []string) []*unstructured.Unstructured {
 	sort.Strings(unmanagedNames) // Deterministic output
 
-	for i, externalName := range unmanagedNames {
+	objs := make([]*unstructured.Unstructured, 0, len(unmanagedNames))
+
+	for _, externalName := range unmanagedNames {
 		// Generate a stable name based on the external name
 		mrName := generateMRName(mrd.Spec.Names.Kind, externalName)
 
@@ -283,30 +292,40 @@ func (c *discoverCmd) generateManifests(mrd *xpv1alpha1.ManagedResourceDefinitio
 		obj.SetNamespace(c.Namespace)
 
 		// Set annotations
-		annotations := map[string]string{
+		obj.SetAnnotations(map[string]string{
 			"crossplane.io/external-name": externalName,
-		}
-		obj.SetAnnotations(annotations)
+		})
 
-		// Set spec fields
-		spec := map[string]any{
-			"managementPolicies": []string{"Observe", "LateInitialize"},
+		// Set spec fields. The management policies must be set explicitly:
+		// when they are absent the CRD defaults them to "*", which grants full
+		// management and means deleting the managed resource deletes the
+		// external one.
+		obj.Object["spec"] = map[string]any{
+			"managementPolicies": []any{"Observe", "LateInitialize"},
 			"providerConfigRef": map[string]any{
 				"name": c.ProviderConfig,
 			},
 		}
-		obj.Object["spec"] = spec
 
-		// Marshal to YAML
-		buf.Write(marshalToYAML(obj))
-
-		// Add separator between manifests (except after last one)
-		if i < len(unmanagedNames)-1 {
-			buf.WriteString("---\n")
-		}
+		objs = append(objs, obj)
 	}
 
-	return buf.String()
+	return objs
+}
+
+// renderManifests renders adoption objects as a multi-document YAML manifest.
+func renderManifests(objs []*unstructured.Unstructured) (string, error) {
+	docs := make([]string, 0, len(objs))
+
+	for _, obj := range objs {
+		b, err := yaml.Marshal(obj.Object)
+		if err != nil {
+			return "", errors.Wrap(err, "cannot marshal manifest")
+		}
+		docs = append(docs, string(b))
+	}
+
+	return strings.Join(docs, "---\n"), nil
 }
 
 // outputManifests writes the YAML to stdout or a file.
@@ -329,55 +348,28 @@ func (c *discoverCmd) outputManifests(yaml string) error {
 	return nil
 }
 
-// applyManifests applies the generated manifests to the cluster.
-// This implementation uses a simple YAML parser suitable for the generated format.
-// For production use, consider using sigs.k8s.io/yaml for full YAML support.
-func (c *discoverCmd) applyManifests(ctx context.Context, dClient dynamic.Interface, yamlContent string, namespace string) error {
-	// Parse YAML documents (simple splitter for now).
-	// TODO: Use sigs.k8s.io/yaml for full YAML parsing support
-	// (handles comments, aliases, complex structures, etc.)
-	documents := strings.SplitSeq(yamlContent, "---\n")
+// applyManifests creates the given adoption objects in the cluster.
+func (c *discoverCmd) applyManifests(ctx context.Context, dClient dynamic.Interface, objs []*unstructured.Unstructured, mrd *xpv1alpha1.ManagedResourceDefinition) error {
+	// The MRD carries the authoritative plural and API version. Deriving the
+	// plural from the kind gets it wrong for irregular kinds, e.g. an
+	// IPAddress kind is served as "ipaddresses", not "ipaddresss".
+	gvr := schema.GroupVersionResource{
+		Group:    mrd.Spec.Group,
+		Version:  "v1",
+		Resource: mrd.Spec.Names.Plural,
+	}
 
-	for doc := range documents {
-		doc = strings.TrimSpace(doc)
-		if doc == "" {
-			continue
-		}
-
-		// Parse YAML into unstructured object
-		// TODO: Use proper YAML unmarshaler
-		obj := parseYAMLToUnstructured(doc)
-
-		// Extract API version and kind to build GVR
-		apiVersion := obj.GetAPIVersion()
-		kind := obj.GetKind()
-
-		// Parse apiVersion (format: group/version or just version for core API)
-		var group, version string
-		if strings.Contains(apiVersion, "/") {
-			parts := strings.SplitN(apiVersion, "/", 2)
-			group = parts[0]
-			version = parts[1]
-		} else {
-			version = apiVersion
-		}
-
-		gvr := schema.GroupVersionResource{
-			Group:    group,
-			Version:  version,
-			Resource: strings.ToLower(kind + "s"), // Simple pluralization
-		}
-
-		// Apply the resource
+	for _, obj := range objs {
 		ns := obj.GetNamespace()
 		if ns == "" {
-			ns = namespace
+			ns = c.Namespace
+			obj.SetNamespace(ns)
 		}
 
 		_, err := dClient.Resource(gvr).Namespace(ns).Create(ctx, obj, metav1.CreateOptions{})
 		if err != nil {
 			// If resource already exists, that's acceptable (idempotent)
-			if strings.Contains(err.Error(), "already exists") {
+			if kerrors.IsAlreadyExists(err) {
 				continue
 			}
 			return errors.Wrapf(err, "cannot create %s/%s", obj.GetKind(), obj.GetName())
@@ -385,86 +377,6 @@ func (c *discoverCmd) applyManifests(ctx context.Context, dClient dynamic.Interf
 	}
 
 	return nil
-}
-
-// parseYAMLToUnstructured converts a YAML document to an unstructured object.
-// This is a simple implementation that handles the format we generate.
-// TODO: For full YAML support, integrate sigs.k8s.io/yaml package
-// parseYAMLToUnstructured converts a YAML string to an unstructured Kubernetes object.
-//
-// KNOWN LIMITATION (Alpha):
-// This function only parses basic metadata fields (kind, name, namespace, external-name annotation).
-// Complex spec fields like managementPolicies are not yet preserved during parsing.
-// Operators should review generated manifests before applying, as some fields may be missing.
-// TODO: Implement full YAML parsing for complete adoption manifests.
-func parseYAMLToUnstructured(doc string) *unstructured.Unstructured {
-	// For now, use a simple line-by-line parser suitable for our generated format.
-	// This is sufficient for the structured YAML we generate.
-	// A production implementation would use proper YAML parsing.
-
-	obj := &unstructured.Unstructured{
-		Object: make(map[string]any),
-	}
-
-	metadata := make(map[string]any)
-	spec := make(map[string]any)
-	annotations := make(map[string]any)
-
-	lines := strings.SplitSeq(doc, "\n")
-
-	for line := range lines {
-		line = strings.TrimRight(line, " \t")
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// Remove indentation and parse key: value
-		line = strings.TrimLeft(line, " \t")
-
-		// Parse key: value or key: or list item
-		if !strings.Contains(line, ":") {
-			continue
-		}
-
-		parts := strings.SplitN(line, ":", 2)
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Handle special cases for our generated format
-		switch key {
-		case "apiVersion":
-			obj.SetAPIVersion(value)
-		case "kind":
-			obj.SetKind(value)
-		case "name":
-			metadata["name"] = value
-		case "namespace":
-			metadata["namespace"] = value
-		case "annotations":
-			// Annotation fields are parsed individually below (not yet fully implemented)
-		case "crossplane.io/external-name":
-			// This is an annotation value
-			annotations["crossplane.io/external-name"] = value
-		case "managementPolicies":
-			// KNOWN LIMITATION: managementPolicies and other complex spec fields are not yet parsed.
-			// For now, only basic metadata (name, namespace) and annotations are preserved.
-			// TODO: Implement full spec field parsing for adoption manifests.
-		}
-	}
-
-	// Set metadata and spec
-	if len(metadata) > 0 {
-		if len(annotations) > 0 {
-			metadata["annotations"] = annotations
-		}
-		obj.Object["metadata"] = metadata
-	}
-
-	if len(spec) > 0 {
-		obj.Object["spec"] = spec
-	}
-
-	return obj
 }
 
 // Helper functions
@@ -492,59 +404,4 @@ func setDifference(a, b []string) []string {
 		}
 	}
 	return result
-}
-
-// marshalToYAML converts an unstructured object to YAML bytes.
-// This is a simple implementation suitable for the initial version.
-// TODO: Consider using a proper YAML marshaler (e.g., sigs.k8s.io/yaml) for full YAML support.
-func marshalToYAML(obj *unstructured.Unstructured) []byte {
-	var buf bytes.Buffer
-
-	// Write headers
-	buf.WriteString("apiVersion: ")
-	buf.WriteString(obj.GetAPIVersion())
-	buf.WriteString("\n")
-
-	buf.WriteString("kind: ")
-	buf.WriteString(obj.GetKind())
-	buf.WriteString("\n")
-
-	// Write metadata
-	buf.WriteString("metadata:\n")
-	buf.WriteString("  name: ")
-	buf.WriteString(obj.GetName())
-	buf.WriteString("\n")
-
-	buf.WriteString("  namespace: ")
-	buf.WriteString(obj.GetNamespace())
-	buf.WriteString("\n")
-
-	// Write annotations
-	if len(obj.GetAnnotations()) > 0 {
-		buf.WriteString("  annotations:\n")
-		for k, v := range obj.GetAnnotations() {
-			fmt.Fprintf(&buf, "    %s: %s\n", k, v)
-		}
-	}
-
-	// Write spec
-	buf.WriteString("spec:\n")
-	if spec, ok := obj.Object["spec"].(map[string]any); ok {
-		if policies, ok := spec["managementPolicies"].([]string); ok {
-			buf.WriteString("  managementPolicies:\n")
-			for _, p := range policies {
-				fmt.Fprintf(&buf, "  - %s\n", p)
-			}
-		}
-		if pcRef, ok := spec["providerConfigRef"].(map[string]any); ok {
-			buf.WriteString("  providerConfigRef:\n")
-			if name, ok := pcRef["name"].(string); ok {
-				fmt.Fprintf(&buf, "    name: %s\n", name)
-			}
-		}
-	}
-
-	buf.WriteString("\n")
-
-	return buf.Bytes()
 }
