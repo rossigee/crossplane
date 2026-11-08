@@ -66,6 +66,12 @@ var (
 	DiscoveryReportGroupKind        = schema.GroupKind{Group: Group, Kind: DiscoveryReportKind}.String()
 	DiscoveryReportKindAPIVersion   = DiscoveryReportKind + "." + SchemeGroupVersion.String()
 	DiscoveryReportGroupVersionKind = SchemeGroupVersion.WithKind(DiscoveryReportKind)
+
+	// ExternalInventory type metadata.
+	ExternalInventoryKind             = reflect.TypeFor[ExternalInventory]().Name()
+	ExternalInventoryGroupKind        = schema.GroupKind{Group: Group, Kind: ExternalInventoryKind}.String()
+	ExternalInventoryKindAPIVersion   = ExternalInventoryKind + "." + SchemeGroupVersion.String()
+	ExternalInventoryGroupVersionKind = SchemeGroupVersion.WithKind(ExternalInventoryKind)
 )
 
 // addKnownTypes adds this package's types to the supplied scheme.
@@ -75,6 +81,7 @@ func addKnownTypes(s *runtime.Scheme) error {
 		&ManagedResourceDefinition{}, &ManagedResourceDefinitionList{},
 		&ManagedResourceActivationPolicy{}, &ManagedResourceActivationPolicyList{},
 		&DiscoveryReport{}, &DiscoveryReportList{},
+		&ExternalInventory{}, &ExternalInventoryList{},
 	)
 	metav1.AddToGroupVersion(s, SchemeGroupVersion)
 
