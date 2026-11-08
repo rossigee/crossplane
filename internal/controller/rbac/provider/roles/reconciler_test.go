@@ -31,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -333,7 +332,7 @@ func TestReconcileGrantsOwnedResources(t *testing.T) {
 		Kind:       "ProviderRevision",
 		Name:       "provider-revision",
 		UID:        prUID,
-		Controller: ptr.To(true),
+		Controller: new(true),
 	}}
 
 	// getProviderRevision returns a Get that populates our ProviderRevision with
