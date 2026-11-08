@@ -311,7 +311,7 @@ func TestRenderManifestsRoundTrip(t *testing.T) {
 		t.Errorf("renderManifests(...): want %d documents, got %d", want, got)
 	}
 
-	for _, doc := range strings.Split(rendered, "\n---\n") {
+	for doc := range strings.SplitSeq(rendered, "\n---\n") {
 		parsed := &unstructured.Unstructured{}
 		if err := yaml.Unmarshal([]byte(doc), &parsed.Object); err != nil {
 			t.Fatalf("cannot parse rendered manifest: %v", err)
@@ -329,14 +329,4 @@ func TestRenderManifestsRoundTrip(t *testing.T) {
 			t.Error("providerConfigRef lost in round-trip")
 		}
 	}
-}
-
-// stringContains checks if haystack contains needle as a substring.
-func stringContains(haystack, needle string) bool {
-	for i := 0; i <= len(haystack)-len(needle); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
