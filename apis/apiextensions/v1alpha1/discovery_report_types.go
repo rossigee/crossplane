@@ -111,5 +111,6 @@ func (d *DiscoveryReport) SetConditions(c ...xpv2.Condition) {
 type DiscoveryReportList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []DiscoveryReport `json:"items"`
+
+	Items []DiscoveryReport `json:"items"`
 }

@@ -61,13 +61,13 @@ var (
 	ManagedResourceActivationPolicyKindAPIVersion   = ManagedResourceActivationPolicyKind + "." + SchemeGroupVersion.String()
 	ManagedResourceActivationPolicyGroupVersionKind = SchemeGroupVersion.WithKind(ManagedResourceActivationPolicyKind)
 
-	// DiscoveryReport type metadata.
+	// DiscoveryReportKind and related identifiers are the DiscoveryReport type metadata.
 	DiscoveryReportKind             = reflect.TypeFor[DiscoveryReport]().Name()
 	DiscoveryReportGroupKind        = schema.GroupKind{Group: Group, Kind: DiscoveryReportKind}.String()
 	DiscoveryReportKindAPIVersion   = DiscoveryReportKind + "." + SchemeGroupVersion.String()
 	DiscoveryReportGroupVersionKind = SchemeGroupVersion.WithKind(DiscoveryReportKind)
 
-	// ExternalInventory type metadata.
+	// ExternalInventoryKind and related identifiers are the ExternalInventory type metadata.
 	ExternalInventoryKind             = reflect.TypeFor[ExternalInventory]().Name()
 	ExternalInventoryGroupKind        = schema.GroupKind{Group: Group, Kind: ExternalInventoryKind}.String()
 	ExternalInventoryKindAPIVersion   = ExternalInventoryKind + "." + SchemeGroupVersion.String()
