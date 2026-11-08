@@ -60,6 +60,12 @@ var (
 	ManagedResourceActivationPolicyGroupKind        = schema.GroupKind{Group: Group, Kind: ManagedResourceActivationPolicyKind}.String()
 	ManagedResourceActivationPolicyKindAPIVersion   = ManagedResourceActivationPolicyKind + "." + SchemeGroupVersion.String()
 	ManagedResourceActivationPolicyGroupVersionKind = SchemeGroupVersion.WithKind(ManagedResourceActivationPolicyKind)
+
+	// ExternalInventory type metadata.
+	ExternalInventoryKind             = reflect.TypeFor[ExternalInventory]().Name()
+	ExternalInventoryGroupKind        = schema.GroupKind{Group: Group, Kind: ExternalInventoryKind}.String()
+	ExternalInventoryKindAPIVersion   = ExternalInventoryKind + "." + SchemeGroupVersion.String()
+	ExternalInventoryGroupVersionKind = SchemeGroupVersion.WithKind(ExternalInventoryKind)
 )
 
 // addKnownTypes adds this package's types to the supplied scheme.
@@ -68,6 +74,7 @@ func addKnownTypes(s *runtime.Scheme) error {
 		&Usage{}, &UsageList{},
 		&ManagedResourceDefinition{}, &ManagedResourceDefinitionList{},
 		&ManagedResourceActivationPolicy{}, &ManagedResourceActivationPolicyList{},
+		&ExternalInventory{}, &ExternalInventoryList{},
 	)
 	metav1.AddToGroupVersion(s, SchemeGroupVersion)
 
