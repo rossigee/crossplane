@@ -9,7 +9,7 @@ require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/alecthomas/kong v1.16.1
-	github.com/crossplane/crossplane-runtime/v2 v2.5.0-rc.0.0.20261030000521-f78c9aebf4ff
+	github.com/crossplane/crossplane-runtime/v2 v2.5.0-dev-3
 	github.com/crossplane/crossplane/apis/v2 v2.5.0-rc.0.0.20261029180807-76a72bee8a19
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-containerregistry v0.22.1
@@ -222,3 +222,5 @@ require (
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 )
+
+replace github.com/crossplane/crossplane-runtime/v2 => github.com/rossigee/crossplane-runtime/v2 v2.5.0-dev-3
