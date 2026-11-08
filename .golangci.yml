@@ -130,8 +130,10 @@ linters:
         rangeValCopy:
           sizeThreshold: 32
     gomoddirectives:
-      # Allow replace for the local ./apis module.
+      # Allow replace for the local ./apis module and the rossigee fork of crossplane-runtime.
       replace-local: true
+      replace-allow-list:
+        - github.com/crossplane/crossplane-runtime/v2
     govet:
       disable:
         - shadow
