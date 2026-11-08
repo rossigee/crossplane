@@ -26,7 +26,6 @@ import (
 	k8sapiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/e2e-framework/klient/k8s"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
@@ -151,8 +150,8 @@ func createCRDOwnedByActiveProviderRevision(providerName, crdName, group, plural
 					Kind:               pkgv1.ProviderRevisionKind,
 					Name:               pr.GetName(),
 					UID:                pr.GetUID(),
-					Controller:         ptr.To(true),
-					BlockOwnerDeletion: ptr.To(true),
+					Controller:         new(true),
+					BlockOwnerDeletion: new(true),
 				}},
 			},
 			Spec: k8sapiextensionsv1.CustomResourceDefinitionSpec{
@@ -171,7 +170,7 @@ func createCRDOwnedByActiveProviderRevision(providerName, crdName, group, plural
 					Schema: &k8sapiextensionsv1.CustomResourceValidation{
 						OpenAPIV3Schema: &k8sapiextensionsv1.JSONSchemaProps{
 							Type:                   "object",
-							XPreserveUnknownFields: ptr.To(true),
+							XPreserveUnknownFields: new(true),
 						},
 					},
 				}},
