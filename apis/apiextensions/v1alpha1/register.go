@@ -61,7 +61,7 @@ var (
 	ManagedResourceActivationPolicyKindAPIVersion   = ManagedResourceActivationPolicyKind + "." + SchemeGroupVersion.String()
 	ManagedResourceActivationPolicyGroupVersionKind = SchemeGroupVersion.WithKind(ManagedResourceActivationPolicyKind)
 
-	// ExternalInventory type metadata.
+	// ExternalInventoryKind and related identifiers are the ExternalInventory type metadata.
 	ExternalInventoryKind             = reflect.TypeFor[ExternalInventory]().Name()
 	ExternalInventoryGroupKind        = schema.GroupKind{Group: Group, Kind: ExternalInventoryKind}.String()
 	ExternalInventoryKindAPIVersion   = ExternalInventoryKind + "." + SchemeGroupVersion.String()
